@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Iframely Lambda function
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1024 # Iframely can be memory intensive
+    Runtime: nodejs18.x # Or your preferred Node.js version
+
+Resources:
+  IframelyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_handler.handler
+      CodeUri: . # Assumes SAM packages from the root.
+                 # A .samignore file would be important here.
+      # Architectural note: For Node.js, SAM usually expects you to run 'sam build'
+      # which would install dependencies from package.json and zip them up.
+      # CodeUri then points to the build artifact (e.g., .aws-sam/build/IframelyFunction).
+      # For simplicity in this step, we'll use '.' and assume manual or scripted dependency installation
+      # before 'sam package' or 'sam deploy' if not using 'sam build'.
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        # Add other policies if needed, e.g., for VPC access if using ElastiCache
+      Environment:
+        Variables:
+          NODE_ENV: production
+          IFRAMELY_CACHE_ENGINE: node-cache # Default cache engine
+          IFRAMELY_BASE_APP_URL: !Sub "https://\${ServerlessRestApi}.execute-api.\${AWS::Region}.amazonaws.com/Prod"
+          # Add other critical IFRAMELY_ environment variables from config.js:
+          # Example: (refer to your config.js for actual needed variables)
+          IFRAMELY_WHITELIST_URL: 'https://iframely.com/qa/domains.json'
+          IFRAMELY_DEBUG: 'false'
+          # IFRAMELY_PORT: '80' # Not directly used by Lambda, but config might expect it
+          IFRAMELY_SKIP_IFRAMELY_RENDERS: 'false'
+          # Adding a few more potentially relevant ones based on previous analysis
+          IFRAMELY_WHITELIST_URL_RELOAD_PERIOD: '3600000' # 1 hour
+          IFRAMELY_CACHE_TTL: '86400' # 24 hours
+          IFRAMELY_RESPONSE_TIMEOUT: '15000' # 15 seconds
+          IFRAMELY_MAX_REDIRECTS: '5'
+      Events:
+        IframelyApi:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: any
+            RestApiId:
+              Ref: ServerlessRestApi # Use the implicit API Gateway created by SAM
+
+Outputs:
+  IframelyApiEndpoint:
+    Description: "API Gateway endpoint URL for Iframely"
+    Value: !Sub "https://\${ServerlessRestApi}.execute-api.\${AWS::Region}.amazonaws.com/Prod"

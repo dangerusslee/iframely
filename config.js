@@ -12,6 +12,33 @@
     const json = JSON.parse(await readFile(new URL('./package.json', import.meta.url)));
     var version = json.version;
 
+    // Helper function to get and parse environment variables
+    function getEnvVar(key, defaultValue, currentDebugState) {
+        const envVarName = 'IFRAMELY_' + key.replace(/([A-Z]+)/g, '_$1').replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
+        const envValue = process.env[envVarName];
+
+        if (typeof envValue !== 'undefined') {
+            if (currentDebugState) {
+                console.log(`[Config] Using environment variable ${envVarName} for ${key}, value: "${envValue}"`);
+            }
+            if (typeof defaultValue === 'boolean') {
+                return envValue.toLowerCase() === 'true';
+            }
+            if (typeof defaultValue === 'number') {
+                const num = Number(envValue);
+                if (isNaN(num)) {
+                    if (currentDebugState) {
+                        console.warn(`[Config] WARN: Environment variable ${envVarName} for ${key} is expected to be a number, but received "${envValue}". Using default value.`);
+                    }
+                    return defaultValue;
+                }
+                return num;
+            }
+            return envValue;
+        }
+        return defaultValue;
+    }
+
     const config = {
 
         baseAppUrl: "",
@@ -418,11 +445,42 @@
 
     Object.assign(config, local);
 
-    if (!config.baseStaticUrl) {
+    // Apply environment variable overrides
+    // Store initial DEBUG state for the getEnvVar logging, in case DEBUG itself is overridden
+    const initialDebugState = config.DEBUG; // Used by getEnvVar for logging
+
+    for (const key in config) {
+        if (Object.hasOwnProperty.call(config, key)) {
+            const currentValue = config[key];
+            // Override only for scalar types. Complex types (objects, arrays) are not overridden by this loop.
+            if (typeof currentValue === 'string' || typeof currentValue === 'number' || typeof currentValue === 'boolean') {
+                config[key] = getEnvVar(key, currentValue, initialDebugState);
+            }
+        }
+    }
+
+    // If DEBUG was changed by an environment variable, future logging inside this script might be affected.
+    // Log the change in DEBUG status if it occurred.
+    if (config.DEBUG && config.DEBUG !== initialDebugState) {
+        console.log(`[Config] DEBUG mode has been set to ${config.DEBUG} via environment variable IFRAMELY_DEBUG=${process.env.IFRAMELY_DEBUG}`);
+    } else if (!config.DEBUG && config.DEBUG !== initialDebugState && initialDebugState) {
+        // This case handles DEBUG being turned off by an env var when it was initially true.
+        // The getEnvVar would have used initialDebugState=true for its logging, so we log the transition here.
+        console.log(`[Config] DEBUG mode has been set to ${config.DEBUG} via environment variable IFRAMELY_DEBUG=${process.env.IFRAMELY_DEBUG}`);
+    }
+
+
+    // --- Derive dependent configurations AFTER all overrides ---
+
+    // These might depend on baseAppUrl or relativeStaticUrl, which could have been overridden.
+    if (!config.baseStaticUrl) { // It might have been set by a file or env var directly
         config.baseStaticUrl = config.baseAppUrl + config.relativeStaticUrl;
     }
 
-    if (!config.USER_AGENT) {
+    // USER_AGENT depends on baseAppUrl and version.
+    // It's unlikely 'version' is overridden by env var (not a scalar in initial config), but baseAppUrl can be.
+    // Always re-evaluate USER_AGENT if it wasn't explicitly set by a file or env var.
+    if (!config.USER_AGENT) { // It might have been set by a file or env var directly
         var baseAppUrlForAgent;
         if (config.baseAppUrl && config.baseAppUrl.match(/^\/\//)) {
             baseAppUrlForAgent = 'https:' + config.baseAppUrl;
@@ -433,6 +491,8 @@
         config.USER_AGENT = "Iframely/" + version + " (+" + (baseAppUrlForAgent || 'https://github.com/itteco/iframely') + ")";
     }
 
+    // These are derived from complex objects (T, HTTP2_RETRY_CODES_LIST) which are not currently env-overridable by the scalar loop.
+    // Placing them here is for logical consistency: all derivations happen after base values are finalized.
     config.TYPES = Object.values(config.T);
 
     config.HTTP2_RETRY_CODES = {};
